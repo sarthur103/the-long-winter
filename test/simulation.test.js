@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {LEVEL,THRESHOLDS,TRAITS,stars,label,baseline,step,play,tree,makeDeck,offers,makeRun,advance} from '../docs/simulation.js';
+import {LEVEL,THRESHOLDS,TRAITS,stars,label,baseline,step,play,tree,makeDeck,offers,traitOffers,runOptions,makeRun,advance,choose} from '../docs/simulation.js';
 const ref=JSON.parse(readFileSync(new URL('../reference/rabbit_v3_results.json',import.meta.url),'utf8'));
 const close=(actual,expected,message)=>assert.ok(Math.abs(actual-expected)<1e-9,`${message}: ${actual} != ${expected}`);
 const average=xs=>xs.reduce((a,b)=>a+b,0)/xs.length;
@@ -41,10 +41,25 @@ test('400-seed full decision tree: all 102,400 outcomes and aggregate metrics',(
   assert.deepEqual(actual,ref.tree);
 });
 test('choices are grouped, blocked while developing, deterministic after JSON resume, and finale adds no choice',()=>{
-  let r=makeRun(123);for(let i=0;i<8;i++){
+  let r=makeRun(123,'v3');for(let i=0;i<8;i++){
     const [a,b]=offers(r.state,r.deck);assert.ok(a[0]<5&&b[0]>=5);assert.ok(!r.state.active.some(x=>x[0]===a[0]||x[0]===b[0]));
     const n=advance(r,a);assert.deepEqual(n,advance(JSON.parse(JSON.stringify(r)),a));r=n;
   }
   assert.equal(r.choices.length,8);assert.equal(r.state.turn,8);r=advance(r,null);assert.equal(r.state.turn,9);assert.equal(r.state.active.length,0);
   assert.equal(step({...baseline(),population:0}).population,0);
+});
+test('revised rules start at 100 and offer both directions on each of two traits',()=>{
+  const r=makeRun(123),[physical,behavioral]=traitOffers(r.state,r.deck),options=runOptions(r);
+  assert.equal(r.state.population,100);assert.ok(physical<5&&behavioral>=5);
+  assert.deepEqual(options,[[physical,-1],[physical,1],[behavioral,-1],[behavioral,1]]);
+  for(const d of [-1,1]){
+    const n=advance(r,[physical,d]);assert.equal(n.state.traits[physical],20+3*d);
+    assert.ok(!traitOffers(n.state,n.deck).includes(physical));
+    const n2=advance(n,runOptions(n)[0]);assert.equal(n2.state.traits[physical],20+6*d);
+  }
+});
+test('revised game supports all eight choices, final step, and four-option developer policy',()=>{
+  let r=makeRun(500000);
+  for(let i=0;i<8;i++){const options=runOptions(r),a=choose(r.state,options,'lookahead');assert.ok(options.some(v=>v[0]===a[0]&&v[1]===a[1]));r=advance(r,a)}
+  r=advance(r,null);assert.equal(r.state.turn,9);assert.equal(r.state.active.length,0);assert.equal(r.history[0].population,100);
 });

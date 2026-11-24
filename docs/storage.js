@@ -1,15 +1,16 @@
-import {makeRun,advance,stars,label} from './simulation.js';
+import {makeRun,advance,stars,label} from './simulation.js?v=4';
 export const KEY='the-long-winter-v3';
-export const emptySave=()=>({version:3,settings:{reducedMotion:false,sound:false,haptics:true,dev:false},current:null,history:[]});
+export const emptySave=()=>({version:4,settings:{reducedMotion:false,sound:false,haptics:true,dev:false},current:null,history:[]});
 export function replay(entry){
   if(!entry||!Number.isSafeInteger(entry.seed)||entry.seed<0||entry.seed>2147483647||!Array.isArray(entry.choices)||entry.choices.length>8)throw Error('Invalid replay');
-  let r=makeRun(entry.seed);for(const a of entry.choices)r=advance(r,a);
+  const mode=entry.mode??'v3';
+  let r=makeRun(entry.seed,mode);for(const a of entry.choices)r=advance(r,a);
   if(entry.complete){if(r.state.turn!==8)throw Error('Incomplete finale');r=advance(r,null)}
   return {...r,assisted:!!entry.assisted};
 }
-export const record=(r,complete=false)=>({seed:r.seed,choices:r.choices.map(a=>[...a]),complete,assisted:!!r.assisted});
+export const record=(r,complete=false)=>({seed:r.seed,mode:r.mode,choices:r.choices.map(a=>[...a]),complete,assisted:!!r.assisted});
 export function sanitizeSave(raw){
-  if(raw?.version!==3||!Array.isArray(raw.history))throw Error('This is not a V3 save file');
+  if(![3,4].includes(raw?.version)||!Array.isArray(raw.history))throw Error('This is not a supported Long Winter save file');
   const d=emptySave();
   for(const k of Object.keys(d.settings))if(typeof raw.settings?.[k]==='boolean')d.settings[k]=raw.settings[k];
   if(raw.current){const r=replay({...raw.current,complete:false});d.current=record(r)}

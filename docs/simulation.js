@@ -1,6 +1,7 @@
-// Exact JavaScript port of rabbit_evolution_v3.py. No UI dependencies.
+// V3 mechanics and reference replay, with the revised player rules layered on top.
 export const TRAITS=['fur','ears','body','legs','coat','burrow','forage','fat','vigilance','reproduction'];
 export const RATES=[3,2,1,.5], THRESHOLDS=[30,48,58];
+export const GAME_START_POPULATION=100;
 export const LEVEL=[[65,1.17,.16,0],[62,1.08,.20,0],[50,.92,.29,.12],[28,.70,.40,.55],[5,.50,.52,.90],[8,.48,.55,.95],[22,.63,.47,.75],[35,.88,.32,.35],[44,1.04,.23,.08]];
 export const SCORE_NAMES=['Temperature','Energy','Predators','Reproduction'];
 export const ROUND_NAMES=['Late summer','Autumn arrives','First chill','First snowfall','Deep freeze','The long night','Winter loosens','Early thaw','Spring finale'];
@@ -49,6 +50,15 @@ export function offers(s,deck){
   const blocked=new Set(s.active.map(a=>a[0]));
   return deck[s.turn].map(pool=>pool.find(([i,d])=>!blocked.has(i)&&(d>0?s.traits[i]<40:s.traits[i]>0)));
 }
+// Draw one eligible trait per group, not a predetermined signed change.
+export function traitOffers(s,deck){
+  const blocked=new Set(s.active.map(a=>a[0]));
+  return deck[s.turn].map(pool=>pool.find(([i])=>!blocked.has(i))[0]);
+}
+export function runOptions(run){
+  const {state:s,deck,mode}=run;
+  return mode==='v3'?offers(s,deck):traitOffers(s,deck).flatMap(i=>[-1,1].filter(d=>d>0?s.traits[i]<40:s.traits[i]>0).map(d=>[i,d]));
+}
 export function mechanisms(traits,pop,reserve,food,env){
   const [f,e,b,l,c,u,g,a,v,r]=traits.map(t=>(t-20)/20);
   const [temp,productivity,pred,snow]=env, exp=Math.exp;
@@ -78,8 +88,8 @@ export function mechanisms(traits,pop,reserve,food,env){
   const foodNext=clamp(.43*food+.57*productivity-.10*density*activity+.045,.12,1.35);
   return {scores,detail:[births,deaths,foodNext,reserveNext,thermal,intake,demand,predHazard,shelter,activity,coldDeath,energyDeath,capacity]};
 }
-export function baseline(){
-  const s={traits:Array(10).fill(20),active:[],counts:Array(20).fill(0),population:120,reserve:.34,food:1.12,turn:0};
+export function baseline(population=120){
+  const s={traits:Array(10).fill(20),active:[],counts:Array(20).fill(0),population,reserve:.34,food:1.12,turn:0};
   return {...s,...mechanisms(s.traits,s.population,s.reserve,s.food,[61,1.2,.12,0])};
 }
 export function add(s,choice){
@@ -102,19 +112,23 @@ export function choose(s,options,policy,rng){
   if(policy==='random')return options[rng.below(options.length)];
   const val=a=>{let n=step(s,a);if(policy==='lookahead')while(n.turn<LEVEL.length)n=step(n);return value(n)};
   if(!['greedy','lookahead'].includes(policy))throw new RangeError('Unknown policy');
-  return val(options[0])>=val(options[1])?options[0]:options[1];
+  let best=options[0],score=val(best);
+  for(const a of options.slice(1)){const next=val(a);if(next>score){best=a;score=next}}
+  return best;
 }
 export function play(seed,policy){
   const deck=makeDeck(seed),rng=new PythonRandom(seed+999999);let s=baseline();const states=[s],choices=[];
   for(let i=0;i<8;i++){const a=choose(s,offers(s,deck),policy,rng);choices.push(a);s=step(s,a);states.push(s)}states.push(step(s));return {states,choices};
 }
 export function tree(s,deck){if(s.turn===8)return [step(s).population];return offers(s,deck).flatMap(a=>tree(step(s,a),deck))}
-export function makeRun(seed=Math.floor(Math.random()*0x7fffffff)){
-  const s=baseline();return {seed,state:s,deck:makeDeck(seed),history:[s],choices:[]};
+export function makeRun(seed=Math.floor(Math.random()*0x7fffffff),mode='v4'){
+  if(!['v3','v4'].includes(mode))throw new RangeError('Unknown game rules');
+  const s=baseline(mode==='v3'?120:GAME_START_POPULATION);
+  return {seed,mode,state:s,deck:makeDeck(seed),history:[s],choices:[]};
 }
 export function advance(run,choice){
   const turn=run.state.turn;if(turn===9)return run;
-  if(turn<8&&!offers(run.state,run.deck).some(a=>a[0]===choice?.[0]&&a[1]===choice?.[1]))throw new RangeError('Choice not offered');
+  if(turn<8&&!runOptions(run).some(a=>a[0]===choice?.[0]&&a[1]===choice?.[1]))throw new RangeError('Choice not offered');
   if(turn===8&&choice!==null)throw new RangeError('Finale has no new adaptation');
   const state=step(run.state,choice);return {...run,state,history:[...run.history,state],choices:turn<8?[...run.choices,choice]:run.choices};
 }

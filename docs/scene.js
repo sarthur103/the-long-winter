@@ -3,10 +3,11 @@ const W=760; const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
 const rgb=a=>'rgb('+a.join(',')+')';const hash=n=>{let v=Math.sin(n*12.9898+78.233)*43758.5453;return v-Math.floor(v)};
 const polygon=(x,points,fill)=>{x.fillStyle=fill;x.beginPath();points.forEach(([a,b],i)=>i?x.lineTo(a,b):x.moveTo(a,b));x.closePath();x.fill()};
 function ellipse(x,a,b,rx,ry,color){x.fillStyle=color;x.beginPath();x.ellipse(a,b,rx,ry,0,0,Math.PI*2);x.fill()}
-function rabbit(x,px,py,traits,t,i){
+function rabbit(x,px,py,traits,t,i,opacity=1,highlight=0){
   const [fur,ears,body,legs,coat]=traits.map(v=>(v-20)/20);
   const scale=.76+hash(i+42)*.37,hop=Math.max(0,Math.sin(t*2.9+i*3))*4;
-  x.save();x.translate(px,py-hop);x.scale(scale*(i%2?1:-1),scale);
+  x.save();x.globalAlpha*=opacity;x.translate(px,py-hop);x.scale(scale*(i%2?1:-1),scale);
+  if(highlight>0){x.strokeStyle='rgba(245,221,157,'+highlight+')';x.lineWidth=2;x.beginPath();x.ellipse(0,3,19,8,0,0,Math.PI*2);x.stroke()}
   ellipse(x,0,6,16,4,'#20303935');
   const color=rgb(mix([153,117,86],[245,245,235],Math.max(0,Math.min(1,(coat+1)/2))));
   const b=11+body*3+fur*2,ear=15+ears*7;
@@ -25,7 +26,7 @@ function pine(x,px,py,s,snow){
     if(snow>.03)polygon(x,[[px,cy-h],[px-w*.72,cy-6*s],[px,cy-2*s],[px+w*.68,cy-6*s]],rgb(mix([111,142,123],[229,240,237],snow)));
   }
 }
-export function drawScene(canvas,state,env,time){
+export function drawScene(canvas,state,env,time,generation=null){
   const ctx=canvas.getContext('2d');const H=canvas.height,snow=env[3],temp=env[0],t=time/1000;
   const sky=ctx.createLinearGradient(0,0,0,H);
   sky.addColorStop(0,rgb(mix([125,166,172],[83,124,150],snow)));sky.addColorStop(1,rgb(mix([206,215,177],[219,239,243],snow)));
@@ -47,9 +48,12 @@ export function drawScene(canvas,state,env,time){
   const objects=[];
   for(let i=0;i<22;i++){const a=hash(i+100)*13,b=hash(i+200)*13;if(a>3&&a<11&&b>3&&b<11)continue;const [x,y]=project(a,b);objects.push({y,draw:()=>pine(ctx,x,y,.55+hash(i+80)*.65,snow)})}
   const [bx,by]=project(7,8);objects.push({y:by,draw:()=>{const d=state.traits[5]/20;ellipse(ctx,bx,by+4,27*d,11,'#4e5b4c');ellipse(ctx,bx,by,24*d,12,rgb(mix([133,128,89],[205,220,212],snow)));ellipse(ctx,bx,by+3,10*d,6,'#27342f')}});
-  const count=Math.min(32,Math.ceil(state.population/6));for(let i=0;i<count;i++){
+  const visible=p=>Math.min(32,Math.ceil(p/6)),before=generation?visible(generation.before):visible(state.population),after=generation?visible(generation.after):before,count=Math.max(before,after);
+  for(let i=0;i<count;i++){
     const a=3.1+hash(i+500)*8+.2*Math.sin(t*.7+i),b=3+hash(i+800)*8+.18*Math.cos(t*.9+i),[x,y]=project(a,b);
-    objects.push({y,draw:()=>rabbit(ctx,x,y,state.traits,t,i)});
+    const opacity=i>=before?generation.progress:i>=after?1-generation.progress:1;
+    const highlight=generation&&i>=Math.min(before,after)?Math.sin(Math.PI*generation.progress):0;
+    objects.push({y,draw:()=>rabbit(ctx,x,y,state.traits,t,i,opacity,highlight)});
   }
   if(env[2]>.27){
     const px=(t*25+130)%900-70,py=H*.17+Math.sin(t)*6;ctx.strokeStyle='#354650';ctx.lineWidth=3;

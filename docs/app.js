@@ -1,6 +1,6 @@
-import {makeRun,advance,baseline,offers,stars,choose,label,TRAITS,RATES,THRESHOLDS,LEVEL,SCORE_NAMES,ROUND_NAMES} from './simulation.js';
-import {KEY,emptySave,sanitizeSave,replay,record,stats} from './storage.js';
-import {drawScene} from './scene.js';
+import {makeRun,advance,baseline,runOptions,traitOffers,stars,choose,RATES,LEVEL,SCORE_NAMES,ROUND_NAMES,GAME_START_POPULATION} from './simulation.js?v=4';
+import {KEY,emptySave,sanitizeSave,replay,record,stats} from './storage.js?v=4';
+import {drawScene} from './scene.js?v=4';
 const $=s=>document.querySelector(s),el=id=>document.getElementById(id);
 const traitInfo=[
  ['Fur','❆','Thicker fur','Thinner fur','Better insulation; extra bulk makes escape slightly harder.','Less bulk; reduced insulation in cold weather.'],
@@ -16,8 +16,8 @@ const traitInfo=[
 ];
 const choiceName=([i,d])=>traitInfo[i][d>0?2:3];
 const starText=n=>'★'.repeat(n)+'☆'.repeat(3-n);
-let data=emptySave(),storageOK=true,run=null,screen='home',toastTimer,audioContext;
-try {const raw=localStorage.getItem(KEY);if(raw)data=sanitizeSave(JSON.parse(raw))}
+let data=emptySave(),storageOK=true,loadedSave=false,run=null,screen='home',toastTimer,audioContext,transition=null;
+try {const raw=localStorage.getItem(KEY);if(raw){data=sanitizeSave(JSON.parse(raw));loadedSave=true}}
 catch(e){storageOK=false;console.warn('Save unavailable',e)}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(data));storageOK=true}catch(e){storageOK=false;console.warn(e)}
   el('saveStatus').textContent=storageOK?'Saved automatically on this device.':'Storage unavailable — export a backup from settings.'};
@@ -48,20 +48,32 @@ function renderGame(){
   el('starLine').textContent=starText(stars(s.population))+' · final target 30 / 48 / 58';
   el('progress').innerHTML=Array.from({length:9},(_,i)=>'<i class="'+(i<t?'done':i===t?'current':'')+'"></i>').join('');
   el('season').textContent=t?ROUND_NAMES[t-1]:'Before winter';el('population').textContent=s.population;
-  el('change').textContent=prev?'+'+s.detail[0]+' born · −'+s.detail[1]+' lost':'120 founder rabbits';
+  el('change').textContent=prev?'+'+s.detail[0]+' born · −'+s.detail[1]+' lost':s.population+' founder rabbits';
   el('forecastTitle').textContent=ROUND_NAMES[t];
   el('forecast').innerHTML=[['Temperature',env[0]+'°F'],['Food supply',Math.round(env[1]*100)+'%'],['Predator pressure',Math.round(env[2]*100)+'%']].map(([k,v])=>'<div><span>'+k+'</span><strong>'+v+'</strong></div>').join('');
   el('forecastTable').innerHTML='<table><thead><tr><th>Period</th><th>Temp.</th><th>Food</th><th>Risk</th></tr></thead><tbody>'+LEVEL.map((e,i)=>'<tr class="'+(i===t?'now':'')+'"><td>'+(i+1)+' · '+ROUND_NAMES[i]+'</td><td>'+e[0]+'°</td><td>'+Math.round(e[1]*100)+'%</td><td>'+Math.round(e[2]*100)+'%</td></tr>').join('')+'</tbody></table>';
   el('dashboard').innerHTML=SCORE_NAMES.map((name,i)=>{const n=Math.round(s.scores[i]);return '<div class="metric"><div class="metric-top"><span>'+name+'</span><b>'+n+'%</b></div><div class="meter" aria-label="'+name+' '+n+'%"><span style="width:'+n+'%;background:'+(n<45?'#e59b86':n<75?'#e9bf83':'#b8d6b5')+'"></span></div></div>'}).join('');
   el('stock').innerHTML='<b><span>Food stock </span>'+s.food.toFixed(2)+'</b><b><span>Stored energy </span>'+s.reserve.toFixed(2)+'</b>';
-  el('decisionHeading').textContent=ready?'Let winter end':'Choose an adaptation';el('decisionKicker').textContent=ready?'NO NEW CHOICE':'ONE OF TWO';
-  el('decisionText').textContent=ready?'Your last adaptation completes its development. The final spring weather determines your star rating.':'Your chosen trait develops over this period and the next. Repeated changes develop more slowly.';
+  el('decisionHeading').textContent=ready?'Let winter end':'Choose an adaptation';el('decisionKicker').textContent=ready?'NO NEW CHOICE':run.mode==='v3'?'ONE OF TWO':'ONE TRAIT · ONE DIRECTION';
+  el('decisionText').textContent=ready?'Your last adaptation completes its development. The final spring weather determines your star rating.':run.mode==='v3'?'Your chosen trait develops over this period and the next. (Original V3 rules.)':'Choose either trait and increase or decrease it. Your change develops over two periods; repeated changes develop more slowly.';
   const choices=el('choices');choices.replaceChildren();
   if(ready){const b=document.createElement('button');b.className='primary';b.textContent='Enter spring finale';b.onclick=()=>take(null);choices.append(b)}
-  else for(const a of offers(s,run.deck)){
+  else if(run.mode==='v3')for(const a of runOptions(run)){
     const [i,d]=a,info=traitInfo[i],rate=RATES[Math.min(s.counts[2*i+(d>0?1:0)],3)],b=document.createElement('button');b.className='choice';
     b.innerHTML='<span class="trait-icon">'+info[1]+'</span><span><span class="category">'+(i<5?'PHYSICAL':'BEHAVIORAL')+' · '+(d>0?'+':'−')+(rate*2)+' potential</span><b>'+choiceName(a)+'</b><small>'+info[d>0?4:5]+'</small></span>';
     b.onclick=()=>take(a);choices.append(b);
+  }else for(const i of traitOffers(s,run.deck)){
+    const info=traitInfo[i],card=document.createElement('section');card.className='adaptation-card';
+    card.innerHTML='<div class="adaptation-head"><span class="trait-icon">'+info[1]+'</span><div><span class="category">'+(i<5?'PHYSICAL':'BEHAVIORAL')+'</span><strong>'+info[0]+'</strong></div><span class="adaptation-value">'+s.traits[i]+'/40<small>Current</small></span></div><div class="directions"></div>';
+    const controls=card.querySelector('.directions');
+    for(const d of [-1,1]){
+      const a=[i,d],rate=RATES[Math.min(s.counts[2*i+(d>0?1:0)],3)],b=document.createElement('button');
+      const amount=Math.min(rate*2,d>0?40-s.traits[i]:s.traits[i]);
+      b.className='direction-choice';b.dataset.direction=String(d);b.disabled=amount===0;
+      b.innerHTML='<span class="delta">'+(d>0?'+ Increase':'− Decrease')+' · '+amount+'</span><b>'+choiceName(a)+'</b><small>'+(amount?info[d>0?4:5]:'Trait is already at its limit.')+'</small>';
+      b.onclick=()=>take(a);controls.append(b);
+    }
+    choices.append(card);
   }
   el('activeCount').textContent=s.active.length?s.active.length+' developing':'';
   el('traits').innerHTML=traitInfo.map((a,i)=>{const active=s.active.find(v=>v[0]===i);return '<div class="trait-item'+(active?' active':'')+'">'+a[0]+' <b>'+s.traits[i]+'/40</b>'+(active?'<small>'+choiceName(active)+' · 1 period left</small>':'')+'</div>'}).join('');
@@ -74,36 +86,71 @@ function begin(seed,assisted=false){
   run={...makeRun(seed),assisted};data.current=record(run);save();feedback();show('game');
 }
 function take(a){
-  if(!run||run.state.turn>=9)return;try{
-  run=advance(run,a);feedback();
+  if(!run||transition||run.state.turn>=9)return;try{
+  const before=run.state;run=advance(run,a);feedback();
   if(run.state.turn===9){
-    const h={...record(run,true),date:new Date().toISOString()};data.history.push(h);data.current=null;save();renderFinal();show('finale');
-  }else{data.current=record(run);save();renderGame();paint();toast('Generation '+run.state.turn+' complete.')}
+    const h={...record(run,true),date:new Date().toISOString()};data.history.push(h);data.current=null;
+  }else{data.current=record(run)}
+  save();startTransition(before,run.state,a);
   }catch(e){toast(e.message)}
+}
+const ease=x=>x*x*(3-2*x);
+const unit=x=>Math.min(1,Math.max(0,x));
+function startTransition(from,to,choice){
+  const reduced=data.settings.reducedMotion;
+  transition={from,to,choice,start:performance.now(),duration:reduced?650:2200,reduced};
+  el('game').setAttribute('aria-busy','true');el('world').classList.add('evolving');el('turnTransition').hidden=false;
+  el('transitionTitle').textContent=to.turn===9?'Spring finale':'Generation '+to.turn+' evolving';
+  el('transitionWeather').textContent=LEVEL[from.turn][0]+'°F · '+ROUND_NAMES[from.turn];
+  el('transitionTrait').textContent=choice?choiceName(choice)+' is developing':'The last adaptation completes';
+  el('transitionBorn').textContent='+0 born';el('transitionLost').textContent='−0 lost';el('transitionProgress').style.width='0%';
+  for(const b of el('choices').querySelectorAll('button'))b.disabled=true;
+  el('homeButton').disabled=true;el('settingsButton').disabled=true;el('greedy').disabled=true;el('lookahead').disabled=true;
+  el('season').textContent=ROUND_NAMES[from.turn];window.scrollTo(0,0);tickTransition(transition.start);
+}
+function tickTransition(now){
+  const tr=transition;if(!tr)return;
+  const p=unit((now-tr.start)/tr.duration),q=tr.reduced?1:ease(p),lerp=(a,b)=>a+(b-a)*q;
+  const births=Math.round(tr.to.detail[0]*(tr.reduced?1:ease(unit(p/.6))));
+  const losses=Math.round(tr.to.detail[1]*(tr.reduced?1:ease(unit((p-.26)/.74))));
+  const population=tr.from.population+births-losses;
+  const view={...tr.to,population,traits:tr.to.traits.map((v,i)=>lerp(tr.from.traits[i],v))};
+  const oldEnv=tr.from.turn?LEVEL[tr.from.turn-1]:LEVEL[0],newEnv=LEVEL[tr.from.turn],env=newEnv.map((v,i)=>lerp(oldEnv[i],v));
+  drawScene(el('gameCanvas'),view,env,tr.reduced?0:now*2.1,tr.reduced?null:{before:tr.from.population,after:tr.to.population,progress:q});
+  el('population').textContent=population;el('change').textContent='+'+births+' born · −'+losses+' lost';
+  el('transitionBorn').textContent='+'+births+' born';el('transitionLost').textContent='−'+losses+' lost';
+  el('transitionProgress').style.width=(p*100)+'%';
+  if(p<1)return;
+  transition=null;el('world').classList.remove('evolving');el('game').removeAttribute('aria-busy');el('turnTransition').hidden=true;
+  el('homeButton').disabled=false;el('settingsButton').disabled=false;
+  if(run.state.turn===9){renderFinal();show('finale')}
+  else{renderGame();paint(now);toast('Generation '+run.state.turn+' complete. +'+tr.to.detail[0]+' born · −'+tr.to.detail[1]+' lost.')}
 }
 function renderFinal(){
   const s=run.state,n=stars(s.population),peak=Math.max(...run.history.map(a=>a.population));
   el('finaleStars').textContent=starText(n);
   el('finaleTitle').textContent=n===3?'Winter mastered.':n===2?'A thriving colony.':n===1?'Spring is yours.':s.population?'Too few remain.':'The colony is lost.';
   el('finaleCopy').textContent=s.population+' rabbits reach spring. '+(n===3?'Your colony exceeded the mastery threshold.':n?'A viable colony has earned '+n+' star'+(n===1?'':'s')+'.':'A viable colony needs at least 30 rabbits. Try another path.');
-  el('runSummary').innerHTML=[['Final population',s.population],['Peak population',peak],['Stars',n+' / 3'],['Starting rabbits',120]].map(([k,v])=>'<div><span>'+k+'</span><strong>'+v+'</strong></div>').join('');
+  el('runSummary').innerHTML=[['Final population',s.population],['Peak population',peak],['Stars',n+' / 3'],['Starting rabbits',run.history[0].population]].map(([k,v])=>'<div><span>'+k+'</span><strong>'+v+'</strong></div>').join('');
   const chart=el('populationChart'),max=Math.max(160,peak),points=run.history.map((a,i)=>[13+i*32.4,106-a.population/max*94]),line=points.map(p=>p.join(',')).join(' ');
-  chart.innerHTML=[0,30,58,120].map(v=>'<line x1="13" y1="'+(106-v/max*94)+'" x2="305" y2="'+(106-v/max*94)+'" stroke="#638087" stroke-width=".6" stroke-dasharray="3 4"/>').join('')+'<polygon points="13,106 '+line+' 305,106" fill="#8eb7a328"/><polyline points="'+line+'" fill="none" stroke="#c4e0ba" stroke-width="2.5"/>'+points.map(([x,y],i)=>'<circle cx="'+x+'" cy="'+y+'" r="3" fill="#edbd79"/><text x="'+x+'" y="121" text-anchor="middle" font-size="8" fill="#b6cecd">'+i+'</text>').join('');
+  chart.innerHTML=[0,30,58,run.history[0].population].map(v=>'<line x1="13" y1="'+(106-v/max*94)+'" x2="305" y2="'+(106-v/max*94)+'" stroke="#638087" stroke-width=".6" stroke-dasharray="3 4"/>').join('')+'<polygon points="13,106 '+line+' 305,106" fill="#8eb7a328"/><polyline points="'+line+'" fill="none" stroke="#c4e0ba" stroke-width="2.5"/>'+points.map(([x,y],i)=>'<circle cx="'+x+'" cy="'+y+'" r="3" fill="#edbd79"/><text x="'+x+'" y="121" text-anchor="middle" font-size="8" fill="#b6cecd">'+i+'</text>').join('');
   el('finalChoices').innerHTML=run.choices.map((a,i)=>'<div class="choice-history"><span>Round '+(i+1)+'</span><b>'+choiceName(a)+'</b></div>').join('');
 }
+const homeState=baseline(GAME_START_POPULATION);
 function paint(time=0){
-  if(screen==='home')drawScene(el('homeCanvas'),baseline(),[65,1.17,.16,.08],data.settings.reducedMotion?0:time);
+  if(transition)return;
+  if(screen==='home')drawScene(el('homeCanvas'),homeState,[65,1.17,.16,.08],data.settings.reducedMotion?0:time);
   if(screen==='game'&&run)drawScene(el('gameCanvas'),run.state,run.state.turn?LEVEL[run.state.turn-1]:LEVEL[0],data.settings.reducedMotion?0:time);
 }
-let previous=0;function animation(now){if(!document.hidden&&!data.settings.reducedMotion&&now-previous>32){previous=now;paint(now)}requestAnimationFrame(animation)}requestAnimationFrame(animation);
+let previous=0;function animation(now){if(!document.hidden&&now-previous>32){previous=now;if(transition)tickTransition(now);else if(!data.settings.reducedMotion)paint(now)}requestAnimationFrame(animation)}requestAnimationFrame(animation);
 function syncSettings(){for(const [id,key] of [['reducedMotion','reducedMotion'],['sound','sound'],['haptics','haptics'],['devMode','dev']])el(id).checked=data.settings[key];el('devPanel').hidden=!data.settings.dev}
 for(const [id,key] of [['reducedMotion','reducedMotion'],['sound','sound'],['haptics','haptics'],['devMode','dev']])el(id).onchange=e=>{data.settings[key]=e.target.checked;save();syncSettings();if(screen==='game')renderGame();paint()};
 el('newRun').onclick=()=>begin();el('resumeRun').onclick=()=>{run=replay(data.current);show('game')};el('homeButton').onclick=()=>show('home');el('playAgain').onclick=()=>begin();el('backHome').onclick=()=>show('home');el('settingsButton').onclick=()=>{syncSettings();el('settings').showModal()};
 el('seedStart').onclick=()=>{const n=Number(el('seed').value);if(!el('seed').value||!Number.isSafeInteger(n)||n<0||n>2147483647){toast('Enter a valid seed from 0 to 2147483647.');return}el('settings').close();begin(n,true)};
-for(const p of ['greedy','lookahead'])el(p).onclick=()=>{if(run&&run.state.turn<8){run.assisted=true;take(choose(run.state,offers(run.state,run.deck),p))}};
+for(const p of ['greedy','lookahead'])el(p).onclick=()=>{if(run&&!transition&&run.state.turn<8){run.assisted=true;take(choose(run.state,runOptions(run),p))}};
 el('resetSave').onclick=()=>{if(confirm('Erase all saved winters, history and settings from this device?')){data=emptySave();run=null;save();syncSettings();el('settings').close();show('home');toast('Local data erased.')}};
 el('exportSave').onclick=()=>{const file=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(file);a.download='long-winter-save.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
 el('importSave').onclick=()=>el('saveFile').click();el('saveFile').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;const newSave=sanitizeSave(JSON.parse(await f.text()));if(!confirm('Replace your local history and current winter with this backup?'))return;data=newSave;run=null;save();syncSettings();el('settings').close();show('home');toast('Backup imported.')}catch(err){toast('Could not import: '+err.message)}finally{e.target.value=''}};
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(console.warn);
-if(matchMedia('(prefers-reduced-motion: reduce)').matches&&!data.current&&!data.history.length)data.settings.reducedMotion=true;
+if(!loadedSave&&matchMedia('(prefers-reduced-motion: reduce)').matches)data.settings.reducedMotion=true;
 syncSettings();renderHome();paint();
