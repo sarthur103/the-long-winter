@@ -3,20 +3,20 @@ const W=760; const mix=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
 const rgb=a=>'rgb('+a.join(',')+')';const hash=n=>{let v=Math.sin(n*12.9898+78.233)*43758.5453;return v-Math.floor(v)};
 const polygon=(x,points,fill)=>{x.fillStyle=fill;x.beginPath();points.forEach(([a,b],i)=>i?x.lineTo(a,b):x.moveTo(a,b));x.closePath();x.fill()};
 function ellipse(x,a,b,rx,ry,color){x.fillStyle=color;x.beginPath();x.ellipse(a,b,rx,ry,0,0,Math.PI*2);x.fill()}
-function rabbit(x,px,py,traits,t,i,opacity=1,highlight=0){
+function rabbit(x,px,py,traits,t,i,opacity=1,highlight=0,face=1,moving=true){
   const [fur,ears,body,legs,coat]=traits.map(v=>(v-20)/20);
-  const scale=.76+hash(i+42)*.37,hop=Math.max(0,Math.sin(t*2.9+i*3))*4;
-  x.save();x.globalAlpha*=opacity;x.translate(px,py-hop);x.scale(scale*(i%2?1:-1),scale);
+  const scale=.76+hash(i+42)*.37,step=moving?Math.sin(t*12+i*3):0,hop=Math.max(0,step)*6,graze=moving?0:3+Math.sin(t*15+i)*1.3;
+  x.save();x.globalAlpha*=opacity;x.translate(px,py-hop);x.scale(scale*face,scale);
   if(highlight>0){x.strokeStyle='rgba(245,221,157,'+highlight+')';x.lineWidth=2;x.beginPath();x.ellipse(0,3,19,8,0,0,Math.PI*2);x.stroke()}
   ellipse(x,0,6,16,4,'#20303935');
   const color=rgb(mix([153,117,86],[245,245,235],Math.max(0,Math.min(1,(coat+1)/2))));
   const b=11+body*3+fur*2,ear=15+ears*7;
   ellipse(x,-8,-4,5+fur,5+fur,'#eae4d8');ellipse(x,0,-5,b,7+body*2+fur*1.5,color);
-  ellipse(x,7,-9,6+fur,6+fur,color);
-  x.save();x.translate(5,-13);x.rotate(-.19);ellipse(x,0,-ear*.45,2.8,ear*.55,color);ellipse(x,.2,-ear*.48,1,ear*.35,'#c69890');x.restore();
-  x.save();x.translate(10,-13);x.rotate(.26);ellipse(x,0,-ear*.43,2.6,ear*.52,color);x.restore();
-  ellipse(x,9,-10,1.6,1.6,'#213139');ellipse(x,13,-7,1.1,1.2,'#805a56');
-  ellipse(x,1,1+legs*2,5+legs,2.1,color);ellipse(x,10,1+legs*2,4+legs,2.1,color);x.restore();
+  ellipse(x,7,-9+graze,6+fur,6+fur,color);
+  x.save();x.translate(5,-13+graze);x.rotate(-.19+step*.22-graze*.09);ellipse(x,0,-ear*.45,2.8,ear*.55,color);ellipse(x,.2,-ear*.48,1,ear*.35,'#c69890');x.restore();
+  x.save();x.translate(10,-13+graze);x.rotate(.26+step*.17-graze*.09);ellipse(x,0,-ear*.43,2.6,ear*.52,color);x.restore();
+  ellipse(x,9,-10+graze,1.6,1.6,'#213139');ellipse(x,13,-7+graze,1.1,1.2,'#805a56');
+  ellipse(x,1-step*4,1+legs*2,5+legs,2.1,color);ellipse(x,10+step*5,1+legs*2,4+legs,2.1,color);x.restore();
 }
 function pine(x,px,py,s,snow){
   ellipse(x,px,py+4,17*s,6*s,'#18352f42');x.fillStyle='#765b48';x.fillRect(px-2*s,py-16*s,4*s,17*s);
@@ -50,10 +50,11 @@ export function drawScene(canvas,state,env,time,generation=null){
   const [bx,by]=project(7,8);objects.push({y:by,draw:()=>{const d=state.traits[5]/20;ellipse(ctx,bx,by+4,27*d,11,'#4e5b4c');ellipse(ctx,bx,by,24*d,12,rgb(mix([133,128,89],[205,220,212],snow)));ellipse(ctx,bx,by+3,10*d,6,'#27342f')}});
   const visible=p=>Math.min(32,Math.ceil(p/6)),before=generation?visible(generation.before):visible(state.population),after=generation?visible(generation.after):before,count=Math.max(before,after);
   for(let i=0;i<count;i++){
-    const a=3.1+hash(i+500)*8+.2*Math.sin(t*.7+i),b=3+hash(i+800)*8+.18*Math.cos(t*.9+i),[x,y]=project(a,b);
+    const phase=t*(.65+hash(i+79)*.4)+i*2.18,a=3.1+hash(i+500)*8+.60*Math.sin(phase),b=3+hash(i+800)*8+.38*Math.cos(phase*.83);
+    const [x,y]=project(a,b),velocity=.6*Math.cos(phase)+.32*Math.sin(phase*.83),moving=Math.abs(velocity)>.24;
     const opacity=i>=before?generation.progress:i>=after?1-generation.progress:1;
     const highlight=generation&&i>=Math.min(before,after)?Math.sin(Math.PI*generation.progress):0;
-    objects.push({y,draw:()=>rabbit(ctx,x,y,state.traits,t,i,opacity,highlight)});
+    objects.push({y,draw:()=>rabbit(ctx,x,y,state.traits,t,i,opacity,highlight,velocity>0?1:-1,moving)});
   }
   if(env[2]>.27){
     const px=(t*25+130)%900-70,py=H*.17+Math.sin(t)*6;ctx.strokeStyle='#354650';ctx.lineWidth=3;

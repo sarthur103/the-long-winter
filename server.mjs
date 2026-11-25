@@ -1,6 +1,6 @@
 import {createServer} from 'node:http';
 import {readFile} from 'node:fs/promises';
-const files={'/':'index.html','/index.html':'index.html','/styles.css':'styles.css','/turns.css':'turns.css','/app.js':'app.js','/simulation.js':'simulation.js','/storage.js':'storage.js','/scene.js':'scene.js','/sw.js':'sw.js','/manifest.webmanifest':'manifest.webmanifest','/icon.svg':'icon.svg','/icon-180.png':'icon-180.png','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png'};
+const files={'/':'index.html','/index.html':'index.html','/styles.css':'styles.css','/turns.css':'turns.css','/cinematic.css':'cinematic.css','/app.js':'app.js','/simulation.js':'simulation.js','/storage.js':'storage.js','/scene.js':'scene.js','/cinematic.js':'cinematic.js','/sw.js':'sw.js','/manifest.webmanifest':'manifest.webmanifest','/icon.svg':'icon.svg','/icon-180.png':'icon-180.png','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png'};
 const mime={html:'text/html; charset=utf-8',css:'text/css; charset=utf-8',js:'text/javascript; charset=utf-8',webmanifest:'application/manifest+json',svg:'image/svg+xml',png:'image/png'};
 const port=Number(process.argv[2]||8787);
 createServer(async(req,res)=>{

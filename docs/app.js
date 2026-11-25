@@ -1,6 +1,7 @@
 import {makeRun,advance,baseline,runOptions,traitOffers,stars,choose,RATES,LEVEL,SCORE_NAMES,ROUND_NAMES,GAME_START_POPULATION} from './simulation.js?v=4';
 import {KEY,emptySave,sanitizeSave,replay,record,stats} from './storage.js?v=4';
-import {drawScene} from './scene.js?v=4';
+import {drawScene} from './scene.js?v=5';
+import {makeOpening,makeGeneration,filmDuration,filmFrame,drawFilm} from './cinematic.js?v=5';
 const $=s=>document.querySelector(s),el=id=>document.getElementById(id);
 const traitInfo=[
  ['Fur','❆','Thicker fur','Thinner fur','Better insulation; extra bulk makes escape slightly harder.','Less bulk; reduced insulation in cold weather.'],
@@ -16,13 +17,13 @@ const traitInfo=[
 ];
 const choiceName=([i,d])=>traitInfo[i][d>0?2:3];
 const starText=n=>'★'.repeat(n)+'☆'.repeat(3-n);
-let data=emptySave(),storageOK=true,loadedSave=false,run=null,screen='home',toastTimer,audioContext,transition=null;
+let data=emptySave(),storageOK=true,loadedSave=false,run=null,screen='home',toastTimer,audioContext,filmSession=null;
 try {const raw=localStorage.getItem(KEY);if(raw){data=sanitizeSave(JSON.parse(raw));loadedSave=true}}
 catch(e){storageOK=false;console.warn('Save unavailable',e)}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(data));storageOK=true}catch(e){storageOK=false;console.warn(e)}
   el('saveStatus').textContent=storageOK?'Saved automatically on this device.':'Storage unavailable — export a backup from settings.'};
 function toast(message){const t=el('toast');t.textContent=message;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2600)}
-function show(id){screen=id;document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id));if(id==='home')renderHome();if(id==='game')renderGame();window.scrollTo(0,0);paint()}
+function show(id){screen=id;el('shell').classList.toggle('in-film',id==='cinema');document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id));if(id==='home')renderHome();if(id==='game')renderGame();window.scrollTo(0,0);paint()}
 function feedback(){
   if(data.settings.haptics&&navigator.vibrate)navigator.vibrate(20);
   if(!data.settings.sound)return;
@@ -82,50 +83,67 @@ function renderGame(){
   el('saveStatus').textContent=storageOK?'Saved automatically on this device.':'Storage unavailable — export a backup from settings.';
 }
 function begin(seed,assisted=false){
+  if(filmSession)return;
   if(data.current&&!confirm('Replace the winter you have in progress?'))return;
-  run={...makeRun(seed),assisted};data.current=record(run);save();feedback();show('game');
+  run={...makeRun(seed),assisted};data.current=record(run);save();feedback();
+  startFilm(makeOpening({state:run.state,seed:run.seed}));
 }
 function take(a){
-  if(!run||transition||run.state.turn>=9)return;try{
+  if(!run||filmSession||run.state.turn>=9)return;try{
   const before=run.state;run=advance(run,a);feedback();
   if(run.state.turn===9){
     const h={...record(run,true),date:new Date().toISOString()};data.history.push(h);data.current=null;
   }else{data.current=record(run)}
-  save();startTransition(before,run.state,a);
+  save();startFilm(makeGeneration({before,after:run.state,weather:LEVEL[before.turn],period:ROUND_NAMES[before.turn],choice:a,choiceLabel:a?choiceName(a):null,seed:run.seed+before.turn*193}));
   }catch(e){toast(e.message)}
 }
-const ease=x=>x*x*(3-2*x);
-const unit=x=>Math.min(1,Math.max(0,x));
-function startTransition(from,to,choice){
-  const reduced=data.settings.reducedMotion;
-  transition={from,to,choice,start:performance.now(),duration:reduced?650:2200,reduced};
-  el('game').setAttribute('aria-busy','true');el('world').classList.add('evolving');el('turnTransition').hidden=false;
-  el('transitionTitle').textContent=to.turn===9?'Spring finale':'Generation '+to.turn+' evolving';
-  el('transitionWeather').textContent=LEVEL[from.turn][0]+'°F · '+ROUND_NAMES[from.turn];
-  el('transitionTrait').textContent=choice?choiceName(choice)+' is developing':'The last adaptation completes';
-  el('transitionBorn').textContent='+0 born';el('transitionLost').textContent='−0 lost';el('transitionProgress').style.width='0%';
-  for(const b of el('choices').querySelectorAll('button'))b.disabled=true;
-  el('homeButton').disabled=true;el('settingsButton').disabled=true;el('greedy').disabled=true;el('lookahead').disabled=true;
-  el('season').textContent=ROUND_NAMES[from.turn];window.scrollTo(0,0);tickTransition(transition.start);
+const filmBars=[...el('filmProgress').children];
+function startFilm(film){
+  filmSession={film,elapsed:0,last:null,index:-1,still:data.settings.reducedMotion,paused:false};
+  clearTimeout(toastTimer);el('toast').classList.remove('show');
+  const opening=film.type==='opening';
+  el('filmChapter').textContent=opening?'Opening cinematic':film.type==='finale'?'Spring finale':'Generation '+film.after.turn;
+  el('filmContinue').textContent=opening?'Begin round one':film.type==='finale'?'See final results':'Next round';
+  el('filmPopulation').textContent=film.before.population+' → '+film.after.population;
+  el('filmBorn').textContent='+'+film.after.detail[0];el('filmLost').textContent='−'+film.after.detail[1];
+  el('filmPause').textContent='Pause';
+  show('cinema');updateFilm(0);el(filmSession.still?'filmContinue':'filmSkip').focus({preventScroll:true});
 }
-function tickTransition(now){
-  const tr=transition;if(!tr)return;
-  const p=unit((now-tr.start)/tr.duration),q=tr.reduced?1:ease(p),lerp=(a,b)=>a+(b-a)*q;
-  const births=Math.round(tr.to.detail[0]*(tr.reduced?1:ease(unit(p/.6))));
-  const losses=Math.round(tr.to.detail[1]*(tr.reduced?1:ease(unit((p-.26)/.74))));
-  const population=tr.from.population+births-losses;
-  const view={...tr.to,population,traits:tr.to.traits.map((v,i)=>lerp(tr.from.traits[i],v))};
-  const oldEnv=tr.from.turn?LEVEL[tr.from.turn-1]:LEVEL[0],newEnv=LEVEL[tr.from.turn],env=newEnv.map((v,i)=>lerp(oldEnv[i],v));
-  drawScene(el('gameCanvas'),view,env,tr.reduced?0:now*2.1,tr.reduced?null:{before:tr.from.population,after:tr.to.population,progress:q});
-  el('population').textContent=population;el('change').textContent='+'+births+' born · −'+losses+' lost';
-  el('transitionBorn').textContent='+'+births+' born';el('transitionLost').textContent='−'+losses+' lost';
-  el('transitionProgress').style.width=(p*100)+'%';
-  if(p<1)return;
-  transition=null;el('world').classList.remove('evolving');el('game').removeAttribute('aria-busy');el('turnTransition').hidden=true;
-  el('homeButton').disabled=false;el('settingsButton').disabled=false;
-  if(run.state.turn===9){renderFinal();show('finale')}
-  else{renderGame();paint(now);toast('Generation '+run.state.turn+' complete. +'+tr.to.detail[0]+' born · −'+tr.to.detail[1]+' lost.')}
+function updateFilm(elapsed){
+  const s=filmSession,f=s.film,opening=f.type==='opening';
+  const frame=filmFrame(f,s.still?(opening?1600:filmDuration(f)-650):elapsed);
+  if(s.index!==frame.index){
+    s.index=frame.index;
+    el('filmShotName').textContent=frame.shot.name;el('filmShotWeather').textContent=frame.shot.env[0]+'°F';
+    el('filmEyebrow').textContent=s.still?'Reduced motion · scene summary':'Scene '+(s.index+1)+' of '+f.shots.length;
+    el('filmTitle').textContent=frame.shot.title;
+    el('filmCaption').textContent=s.still&&opening?'One hundred rabbits. Eight generations to adapt before the spring thaw.':frame.shot.copy;
+    el('filmRecap').hidden=opening||s.index!==f.shots.length-1;
+    el('filmContinue').hidden=!s.still&&s.index!==f.shots.length-1;
+    el('filmMotion').hidden=!s.still;el('filmPause').hidden=s.still;
+  }
+  filmBars.forEach((bar,i)=>bar.style.setProperty('--fill',i<frame.index?1:i===frame.index?frame.phase:0));
+  drawFilm(el('filmCanvas'),f,frame,{still:s.still});
+  if(frame.done&&!s.still)finishFilm();
 }
+function tickFilm(now){
+  const s=filmSession;if(s.still||s.paused)return;
+  if(s.last!==null)s.elapsed+=Math.min(150,Math.max(0,now-s.last));
+  s.last=now;updateFilm(s.elapsed);
+}
+function finishFilm(){
+  const s=filmSession;if(!s)return;
+  filmSession=null;
+  if(run.state.turn===9){renderFinal();show('finale');el('finaleTitle').tabIndex=-1;el('finaleTitle').focus({preventScroll:true})}
+  else{
+    show('game');el('roundLabel').tabIndex=-1;el('roundLabel').focus({preventScroll:true});
+    if(s.film.type!=='opening')toast('Generation '+run.state.turn+' complete. +'+run.state.detail[0]+' born · −'+run.state.detail[1]+' lost.');
+  }
+}
+el('filmSkip').onclick=finishFilm;el('filmContinue').onclick=finishFilm;
+el('filmMotion').onclick=()=>{const s=filmSession;if(!s)return;s.still=false;s.index=-1;s.elapsed=0;s.last=null;updateFilm(0);el('filmPause').focus({preventScroll:true})};
+el('filmPause').onclick=()=>{const s=filmSession;if(!s)return;s.paused=!s.paused;s.last=null;el('filmPause').textContent=s.paused?'Resume animation':'Pause'};
+document.addEventListener('visibilitychange',()=>{if(filmSession)filmSession.last=null});
 function renderFinal(){
   const s=run.state,n=stars(s.population),peak=Math.max(...run.history.map(a=>a.population));
   el('finaleStars').textContent=starText(n);
@@ -138,16 +156,16 @@ function renderFinal(){
 }
 const homeState=baseline(GAME_START_POPULATION);
 function paint(time=0){
-  if(transition)return;
+  if(filmSession)return;
   if(screen==='home')drawScene(el('homeCanvas'),homeState,[65,1.17,.16,.08],data.settings.reducedMotion?0:time);
   if(screen==='game'&&run)drawScene(el('gameCanvas'),run.state,run.state.turn?LEVEL[run.state.turn-1]:LEVEL[0],data.settings.reducedMotion?0:time);
 }
-let previous=0;function animation(now){if(!document.hidden&&now-previous>32){previous=now;if(transition)tickTransition(now);else if(!data.settings.reducedMotion)paint(now)}requestAnimationFrame(animation)}requestAnimationFrame(animation);
+let previous=0;function animation(now){if(!document.hidden&&now-previous>30){previous=now;if(filmSession)tickFilm(now);else if(!data.settings.reducedMotion)paint(now)}requestAnimationFrame(animation)}requestAnimationFrame(animation);
 function syncSettings(){for(const [id,key] of [['reducedMotion','reducedMotion'],['sound','sound'],['haptics','haptics'],['devMode','dev']])el(id).checked=data.settings[key];el('devPanel').hidden=!data.settings.dev}
 for(const [id,key] of [['reducedMotion','reducedMotion'],['sound','sound'],['haptics','haptics'],['devMode','dev']])el(id).onchange=e=>{data.settings[key]=e.target.checked;save();syncSettings();if(screen==='game')renderGame();paint()};
 el('newRun').onclick=()=>begin();el('resumeRun').onclick=()=>{run=replay(data.current);show('game')};el('homeButton').onclick=()=>show('home');el('playAgain').onclick=()=>begin();el('backHome').onclick=()=>show('home');el('settingsButton').onclick=()=>{syncSettings();el('settings').showModal()};
 el('seedStart').onclick=()=>{const n=Number(el('seed').value);if(!el('seed').value||!Number.isSafeInteger(n)||n<0||n>2147483647){toast('Enter a valid seed from 0 to 2147483647.');return}el('settings').close();begin(n,true)};
-for(const p of ['greedy','lookahead'])el(p).onclick=()=>{if(run&&!transition&&run.state.turn<8){run.assisted=true;take(choose(run.state,runOptions(run),p))}};
+for(const p of ['greedy','lookahead'])el(p).onclick=()=>{if(run&&!filmSession&&run.state.turn<8){run.assisted=true;take(choose(run.state,runOptions(run),p))}};
 el('resetSave').onclick=()=>{if(confirm('Erase all saved winters, history and settings from this device?')){data=emptySave();run=null;save();syncSettings();el('settings').close();show('home');toast('Local data erased.')}};
 el('exportSave').onclick=()=>{const file=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(file);a.download='long-winter-save.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
 el('importSave').onclick=()=>el('saveFile').click();el('saveFile').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;const newSave=sanitizeSave(JSON.parse(await f.text()));if(!confirm('Replace your local history and current winter with this backup?'))return;data=newSave;run=null;save();syncSettings();el('settings').close();show('home');toast('Backup imported.')}catch(err){toast('Could not import: '+err.message)}finally{e.target.value=''}};
